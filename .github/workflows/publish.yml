@@ -1,0 +1,47 @@
+# Publishes n8n-nodes-looot to npm with a provenance statement.
+# n8n requires community nodes to be published from GitHub Actions with provenance (since 2026-05-01).
+#
+# NOT RUN YET. This file lives in the gateway repo for review. It only works once this folder is its
+# own public GitHub repo (provenance needs a public source repo) and npm trusted publishing (or an
+# NPM_TOKEN secret) is set for the package.
+#
+# Release: bump "version" in package.json, commit, then push a tag such as 0.1.0.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install (lockfile only, no install scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # n8n-node's prepublishOnly guard blocks plain npm publish unless this is set.
+          RELEASE_MODE: 'true'
