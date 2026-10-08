@@ -3,6 +3,16 @@
 n8n community node for [looot](https://looot.ai): one account and one prepaid balance for 2,500+ data
 endpoints (find and verify emails, enrich companies, Google results, news, and more).
 
+## Install for agents
+
+```bash
+claude mcp add --transport http looot https://api.looot.ai/mcp
+```
+
+n8n community node: n8n-nodes-looot (source only, not yet on npm)
+
+See also: [awesome-looot-use-cases](https://github.com/loootai/awesome-looot-use-cases) (copy-paste recipes) and [awesome-gtm](https://github.com/loootai/awesome-gtm) (open-source GTM tools).
+
 Status: source only. Not published to npm, not submitted to the n8n Creator Portal.
 
 ## Operations

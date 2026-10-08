@@ -1,0 +1,17 @@
+# n8n-nodes-looot
+
+> looot for n8n: search, inspect and run 2,500+ data endpoints from one prepaid balance
+
+looot is one key and one prepaid balance for 2,500+ data API endpoints from 90+ providers. The agent searches the catalog, sees the price before it runs, and pays per call.
+
+## Install
+
+- Remote MCP server: `claude mcp add --transport http looot https://api.looot.ai/mcp`
+- This repo: n8n community node: n8n-nodes-looot (source only, not yet on npm)
+
+## Links
+
+- Docs: https://docs.looot.ai
+- Pricing: prepaid balance (top up from $5), charged per call, failed calls are free
+- Recipes: https://github.com/loootai/awesome-looot-use-cases
+- GTM tools list: https://github.com/loootai/awesome-gtm
