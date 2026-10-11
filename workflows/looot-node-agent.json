@@ -1,0 +1,214 @@
+{
+  "name": "looot node agent",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "chat-trigger",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "parameters": {
+        "promptType": "auto",
+        "options": {
+          "systemMessage": "You are a data research assistant with looot tools. looot sells data endpoints from one prepaid balance.\nHow to work: 1. Search first with a plain description of the job, never guess an endpoint id. 2. Inspect the endpoint you pick and read its exact input fields and price. 3. Prices are in micros, millionths of a dollar, 10000 micros is one cent. Tell the user the price in dollars before any paid run. 4. Run only after the user has seen the price, except when it is under one cent. 5. If a run returns a run ID instead of a result, get the run until it finishes. 6. Check the balance before a run that costs more than 10 cents.\nRules: report only what the tools returned; if nothing was found, say so; keep answers short; end every paid answer with the cost."
+        }
+      },
+      "id": "agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {}
+      },
+      "id": "model",
+      "name": "Chat Model (pick your own)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        200,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "catalog",
+        "operation": "search",
+        "query": "={{ $fromAI('query', 'What the user wants to do, in plain words', 'string') }}"
+      },
+      "id": "looot-0",
+      "name": "looot search",
+      "type": "n8n-nodes-looot.looootTool",
+      "typeVersion": 1,
+      "position": [
+        360,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "catalog",
+        "operation": "inspect",
+        "endpointId": "={{ $fromAI('endpointId', 'An endpoint ID from a search answer, or job:<job id>', 'string') }}"
+      },
+      "id": "looot-1",
+      "name": "looot inspect",
+      "type": "n8n-nodes-looot.looootTool",
+      "typeVersion": 1,
+      "position": [
+        520,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "run",
+        "operation": "create",
+        "endpointId": "={{ $fromAI('endpointId', 'The endpoint ID to run', 'string') }}",
+        "input": "={{ $fromAI('input', 'The input object, with the exact field names inspect listed', 'json') }}",
+        "inputMode": "json"
+      },
+      "id": "looot-2",
+      "name": "looot run",
+      "type": "n8n-nodes-looot.looootTool",
+      "typeVersion": 1,
+      "position": [
+        680,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "run",
+        "operation": "get",
+        "runId": "={{ $fromAI('runId', 'The run ID returned by a run', 'string') }}"
+      },
+      "id": "looot-3",
+      "name": "looot get run",
+      "type": "n8n-nodes-looot.looootTool",
+      "typeVersion": 1,
+      "position": [
+        840,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "billing",
+        "operation": "getBalance"
+      },
+      "id": "looot-4",
+      "name": "looot balance",
+      "type": "n8n-nodes-looot.looootTool",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model (pick your own)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "looot search": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "looot inspect": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "looot run": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "looot get run": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "looot balance": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

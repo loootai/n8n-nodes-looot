@@ -15,20 +15,110 @@ See also: [awesome-looot-use-cases](https://github.com/loootai/awesome-looot-use
 
 ## Operations
 
-| Operation | REST route | Cost |
-|---|---|---|
-| Search Catalog | `GET /v1/catalog/search?q=` | free |
-| Inspect Endpoint | `GET /v1/operations/{endpointId}` (also works with `job:<id>`) | free |
-| Run | `POST /v1/runs` with `endpointId`, `input`, `idempotencyKey`, `fallback`, `wait` | spends credit |
-| Get Run | `GET /v1/runs/{runId}` | free |
-| Balance | `GET /v1/balance` | free |
+Pick a Resource, then an Operation. Every operation of the [looot API](https://docs.looot.ai/reference) is here.
 
-The catalog search route is GET only. Run sends `endpointId` as an endpoint id or `job:<job id>`,
-for example `job:people.email.find`. With Fallback on, looot tries the next provider of the same job when
-the first finds nothing. If you leave Idempotency Key empty the node uses `n8n-<execution id>-<item index>`.
+**Billing**
+
+| Operation | Route |
+|---|---|
+| Get Balance | `GET /v1/balance` |
+| List Ledger Entries | `GET /v1/ledger` |
+| List Top-Ups | `GET /v1/top-ups` |
+| Request a Top-Up | `POST /v1/top-ups` |
+
+**Public Catalog** (browse without an account)
+
+| Operation | Route |
+|---|---|
+| Catalog Overview | `GET /v1/catalog/overview` |
+| Compare Catalog Items | `POST /v1/public-catalog/compare` |
+| Get a Catalog Item | `GET /v1/public-catalog/{catalogItemId}` |
+| Search the Public Catalog | `GET /v1/public-catalog` |
+
+**Catalog**
+
+| Operation | Route |
+|---|---|
+| Discover Operations | `GET /v1/discover` |
+| Inspect an Operation | `GET /v1/operations/{endpointId}` (also works with `job:<id>`) |
+| List Catalog Endpoints | `GET /v1/catalog/endpoints` |
+| Search the Catalog | `GET /v1/catalog/search` |
+
+**Request**
+
+| Operation | Route |
+|---|---|
+| List Capability Requests | `GET /v1/capability-requests` |
+| Request a Capability | `POST /v1/capability-requests` |
+
+**Run**
+
+| Operation | Route |
+|---|---|
+| Cancel a Run | `POST /v1/runs/{runId}/cancel` |
+| Create a Run | `POST /v1/runs` with `endpointId`, `input`, `idempotencyKey`, `fallback`, `wait` |
+| Get a Run | `GET /v1/runs/{runId}` |
+| List Run Attempts | `GET /v1/runs/{runId}/attempts` |
+| List Runs | `GET /v1/runs` |
+
+Create a Run spends credit and Request a Top-Up creates a checkout. The rest are free reads.
+
+Create a Run sends `endpointId` as an endpoint ID or `job:<job id>`, for example `job:people.email.find`.
+With Fallback on, looot tries the next provider of the same job when the first finds nothing. If you leave
+Idempotency Key empty the node uses `n8n-<execution id>-<item index>`. Search the Catalog hides endpoints that are
+not runnable for your account unless you turn off Runnable Now Only.
+
+## How inputs work
+
+**Endpoint.** Fields that take an endpoint (Create a Run, Inspect an Operation) have two modes. "From List" searches
+the catalog as you type (`GET /v1/catalog/search?q=<text>&limit=20`) and shows each endpoint with its price, for
+example `Tomba / Find a work email from a name and domain | $0.0089 per call`. Endpoints marked coming soon are hidden.
+"By ID" takes an endpoint ID such as `tomba-email-finder`, or a job as `job:people.email.find`. When the node runs as an
+AI tool, a plain string works in both places.
+
+**Input of a run.** Input Mode has two choices. "Fields" (the default) reads `GET /v1/operations/<endpointId>` and
+shows one box per input field, with required fields marked and a short description in the label. Array fields take a
+comma-separated list or a JSON array. Object fields take JSON. "JSON" takes the whole input object, for example
+`{"domain": "example.com", "first_name": "Jane", "last_name": "Doe"}`. Use JSON when you type a `job:` ID and want
+exact control, when an AI agent passes the input, or when an endpoint does not publish its fields. For a `job:` ID the
+Fields mode lists the field names that endpoints of that job use, none required.
+
+**Units.** Prices are in micros, which are millionths of a dollar. 10000 micros is 1 cent and 1000000 is 1 dollar.
+Max Cost is in US dollars. Wait is in seconds, at most 60. Limit is a count.
+
+**Errors.** A bad JSON input, a missing required field or a missing endpoint stops the node before any call, with a
+message that names the field. An API error shows the HTTP status, the looot error code and message, and the retry hint
+when there is one.
+
+**Free or paid.** Every operation description says what to pass and whether it costs anything. Only Create a Run
+spends credit, at the price shown next to the endpoint.
+
+Version 0.2.0 adds the Resource field. Workflows built on 0.1.x need their looot nodes set again.
 
 The node sets `usableAsTool: true`, so an AI Agent can call it as a tool (set
 `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true` on self-hosted n8n).
+
+## Use looot over MCP in n8n
+
+looot also has an MCP server at `https://api.looot.ai/mcp` (streamable HTTP, 19 tools). n8n verified community
+nodes cannot ship the dependencies an MCP client needs, so this is a workflow template that uses n8n's built-in
+MCP Client Tool.
+
+1. Import `workflows/looot-mcp-agent.json` (Workflows, Import from file).
+2. Create an API key at [looot.ai/settings?tab=agent-tokens](https://looot.ai/settings?tab=agent-tokens). The page label is "API keys".
+3. In n8n create a Bearer Auth credential and paste the key as the token.
+4. Open the `looot MCP` node and pick that credential.
+5. Open the chat model node and pick your own model and credential.
+6. Open the chat and ask a question, for example "find the work email of the CEO of example.com".
+
+`workflows/looot-node-agent.json` is the same agent built from this community node, with five looot operations as
+tools (search, inspect, create a run, get a run, balance). Pick your looot API credential on each tool.
+
+Which one to use. The node fits fixed workflow steps, where you know the operation and the inputs.
+The MCP tool fits an agent that should find endpoints on its own, because it sees all 19 looot tools.
+
+Not tested yet: the MCP Client Tool has only been run against looot with an operator token, not end to end with a
+customer API key. Treat the Bearer step with a customer key as unverified until that is done.
 
 ## Credential
 

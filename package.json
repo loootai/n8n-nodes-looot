@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-looot",
-	"version": "0.1.3",
+	"version": "0.2.0",
 	"description": "n8n community node for looot: search, inspect and run 2,500+ data endpoints (email finding, company enrichment, SERP, news) with one prepaid balance.",
 	"license": "MIT",
 	"homepage": "https://docs.looot.ai/integrations/n8n",
