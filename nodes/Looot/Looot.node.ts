@@ -55,7 +55,7 @@ export class Looot implements INodeType {
 					{
 						name: 'Inspect Endpoint',
 						value: 'inspect',
-						description: 'Read the exact inputs, output and price of an endpoint or job (free)',
+						description: 'Read the exact inputs, output and price of an endpoint, or list the endpoints behind a job (free)',
 						action: 'Inspect an endpoint',
 					},
 					{
@@ -132,6 +132,13 @@ export class Looot implements INodeType {
 						type: 'string',
 						default: '',
 					},
+						{
+							displayName: 'Runnable Now Only',
+							name: 'runnableNowOnly',
+							type: 'boolean',
+							default: true,
+							description: 'Whether to drop endpoints marked coming soon or not available for your account',
+						},
 				],
 			},
 
@@ -143,7 +150,7 @@ export class Looot implements INodeType {
 				required: true,
 				default: '',
 				placeholder: 'job:people.email.find',
-				description: 'An endpoint from a search answer, or a job written as job:people.email.find',
+				description: 'An endpoint ID from a search answer. For Inspect you can also write a job as job:people.email.find to list its endpoints. Run accepts both.',
 				displayOptions: { show: { operation: ['inspect', 'run'] } },
 			},
 
@@ -224,11 +231,18 @@ export class Looot implements INodeType {
 					path = '/v1/catalog/search';
 					qs = { q: this.getNodeParameter('query', i) as string, limit: this.getNodeParameter('limit', i) as number };
 					for (const [key, value] of Object.entries(filters)) {
+						if (key === 'runnableNowOnly') continue;
 						if (value !== '' && value !== 0 && value !== undefined) qs[key] = value as string | number;
 					}
 				} else if (operation === 'inspect') {
 					const endpointId = this.getNodeParameter('endpointId', i) as string;
-					path = `/v1/operations/${encodeURIComponent(endpointId)}`;
+					if (endpointId.startsWith('job:')) {
+						// The operations route knows endpoints only. A job is a capability, so list its endpoints.
+						path = '/v1/catalog/search';
+						qs = { capability: endpointId.slice(4), limit: 20 };
+					} else {
+						path = `/v1/operations/${encodeURIComponent(endpointId)}`;
+					}
 				} else if (operation === 'run') {
 					method = 'POST';
 					path = '/v1/runs';
@@ -267,6 +281,14 @@ export class Looot implements INodeType {
 					'loootApi',
 					options,
 				)) as IDataObject;
+				if (operation === 'searchCatalog' && Array.isArray(response.endpoints)) {
+					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
+					if (filters.runnableNowOnly !== false) {
+						response.endpoints = (response.endpoints as IDataObject[]).filter(
+							(endpoint) => endpoint.runnableNow !== false,
+						);
+					}
+				}
 				returnData.push({ json: response, pairedItem: { item: i } });
 			} catch (error) {
 				if (this.continueOnFail()) {
