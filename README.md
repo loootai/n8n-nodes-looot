@@ -13,11 +13,9 @@ endpoints (find and verify emails, enrich companies, Google results, news, and m
 claude mcp add --transport http looot https://api.looot.ai/mcp
 ```
 
-n8n community node: n8n-nodes-looot (source only, not yet on npm)
+In n8n, open Settings, then Community Nodes, then Install, and enter `n8n-nodes-looot`. The package is on [npm](https://www.npmjs.com/package/n8n-nodes-looot).
 
 See also: [awesome-looot-use-cases](https://github.com/loootai/awesome-looot-use-cases) (copy-paste recipes) and [awesome-gtm](https://github.com/loootai/awesome-gtm) (open-source GTM tools).
-
-Status: source only. Not published to npm, not submitted to the n8n Creator Portal.
 
 ## Operations
 
@@ -53,9 +51,8 @@ npm run dev      # n8n with the node loaded, hot reload
 
 Dependencies are pinned to exact versions and the project sets `ignore-scripts=true`.
 
-## Publish (not done)
+## Publish
 
-n8n requires community nodes to be published from GitHub Actions with provenance. `.github/workflows/publish.yml`
-runs `npm publish --provenance --access public` on a version tag. It needs this folder to be its own public
-GitHub repo and npm trusted publishing (or an `NPM_TOKEN` secret). Then submit the package in the n8n Creator
-Portal. See https://docs.n8n.io/integrations/creating-nodes/build/reference/verification-guidelines/.
+`.github/workflows/publish.yml` publishes from GitHub Actions with provenance, which n8n requires for
+verified community nodes. Auth is npm trusted publishing, so the repo stores no token. To release, bump
+`version` in `package.json`, commit, and push a tag with the same number, for example `0.1.1`.
