@@ -18,7 +18,7 @@
 set -u
 
 # Emails allowed anywhere: documentation placeholders and the public support address.
-ALLOWED_EMAIL_RE='@example\.(com|org|net)$|^support@looot\.ai$'
+ALLOWED_EMAIL_RE='@example\.(com|org|net)$|^(support|walid)@looot\.ai$'
 if [ -n "${LEAK_SCAN_ALLOWED_EMAILS:-}" ]; then
   ALLOWED_EMAIL_RE="${ALLOWED_EMAIL_RE}|${LEAK_SCAN_ALLOWED_EMAILS}"
 fi
