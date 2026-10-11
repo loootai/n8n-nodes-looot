@@ -7,11 +7,7 @@
 n8n community node for [looot](https://looot.ai): one account and one prepaid balance for 2,500+ data
 endpoints (find and verify emails, enrich companies, Google results, news, and more).
 
-## Install for agents
-
-```bash
-claude mcp add --transport http looot https://api.looot.ai/mcp
-```
+## Install
 
 In n8n, open Settings, then Community Nodes, then Install, and enter `n8n-nodes-looot`. The package is on [npm](https://www.npmjs.com/package/n8n-nodes-looot).
 
