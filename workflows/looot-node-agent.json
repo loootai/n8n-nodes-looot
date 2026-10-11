@@ -84,7 +84,8 @@
         "resource": "run",
         "operation": "create",
         "endpointId": "={{ $fromAI('endpointId', 'The endpoint ID to run', 'string') }}",
-        "input": "={{ $fromAI('input', 'The input object, with the exact field names inspect listed', 'json') }}"
+        "input": "={{ $fromAI('input', 'The input object, with the exact field names inspect listed', 'json') }}",
+        "inputMode": "json"
       },
       "id": "looot-2",
       "name": "looot run",

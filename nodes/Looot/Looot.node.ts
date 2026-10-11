@@ -1,5 +1,4 @@
 import {
-	NodeApiError,
 	NodeConnectionTypes,
 	NodeOperationError,
 	type IDataObject,
@@ -9,8 +8,9 @@ import {
 	type INodeExecutionData,
 	type INodeType,
 	type INodeTypeDescription,
-	type JsonObject,
 } from 'n8n-workflow';
+import { apiError, endpointFrom, readRunInput } from './helpers';
+import { getInputFields, searchEndpoints } from './methods';
 import { billingDescription } from './descriptions/BillingDescription';
 import { catalogDescription } from './descriptions/CatalogDescription';
 import { publicCatalogDescription } from './descriptions/PublicCatalogDescription';
@@ -30,6 +30,7 @@ type Builder = (ctx: Ctx, i: number) => Call;
 const get = <T>(ctx: Ctx, name: string, i: number, fallback?: T) =>
 	ctx.getNodeParameter(name, i, fallback) as T;
 const str = (ctx: Ctx, name: string, i: number) => get<string>(ctx, name, i, '');
+const ep = (ctx: Ctx, i: number) => endpointFrom(ctx.getNodeParameter('endpointId', i, ''));
 const id = (ctx: Ctx, name: string, i: number) => encodeURIComponent(str(ctx, name, i));
 const list = (value: string) => value.split(',').map((part) => part.trim()).filter(Boolean);
 const defaultKey = (ctx: Ctx, i: number) => `n8n-${ctx.getExecutionId()}-${i}`;
@@ -51,9 +52,6 @@ const page = (ctx: Ctx, i: number): IDataObject => {
 	if (cursor) qs.cursor = cursor;
 	return qs;
 };
-
-const parseJson = (raw: unknown): IDataObject =>
-	(typeof raw === 'string' ? JSON.parse(raw) : raw) as IDataObject;
 
 /** One row per resource.operation: the HTTP call that operation makes. */
 export const OPERATIONS: Record<string, Builder> = {
@@ -91,7 +89,7 @@ export const OPERATIONS: Record<string, Builder> = {
 
 	'catalog.discover': (c, i) => ({ method: 'GET', path: '/v1/discover', qs: collect(c, 'discoverOptions', i) }),
 	'catalog.inspect': (c, i) => {
-		const endpointId = str(c, 'endpointId', i);
+		const endpointId = ep(c, i);
 		if (endpointId.startsWith('job:')) {
 			return { method: 'GET', path: '/v1/catalog/search', qs: { capability: endpointId.slice(4), limit: 20 } };
 		}
@@ -126,9 +124,13 @@ export const OPERATIONS: Record<string, Builder> = {
 	'run.cancel': (c, i) => ({ method: 'POST', path: `/v1/runs/${id(c, 'runId', i)}/cancel` }),
 	'run.create': (c, i) => {
 		const maxCostUsd = get<number>(c, 'maxCostUsd', i, 0);
+		const endpointId = ep(c, i);
+		if (!endpointId) {
+			throw new NodeOperationError(c.getNode(), 'Pick an endpoint in the "Endpoint" field. Use Search the Catalog to find one.', { itemIndex: i });
+		}
 		const body: IDataObject = {
-			endpointId: str(c, 'endpointId', i),
-			input: parseJson(c.getNodeParameter('input', i)),
+			endpointId,
+			input: readRunInput(c, i),
 			idempotencyKey: str(c, 'idempotencyKey', i).trim() || defaultKey(c, i),
 			wait: get<number>(c, 'wait', i),
 		};
@@ -143,6 +145,11 @@ export const OPERATIONS: Record<string, Builder> = {
 };
 
 export class Looot implements INodeType {
+	methods = {
+		listSearch: { searchEndpoints },
+		resourceMapping: { getInputFields },
+	};
+
 	description: INodeTypeDescription = {
 		displayName: 'looot',
 		name: 'looot',
@@ -219,10 +226,16 @@ export class Looot implements INodeType {
 				returnData.push({ json: response, pairedItem: { item: i } });
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
+					const message = error instanceof NodeOperationError ? error.message : apiError(this, error, 'request', i).message;
+					returnData.push({ json: { error: message }, pairedItem: { item: i } });
 					continue;
 				}
-				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				if (error instanceof NodeOperationError) {
+					throw new NodeOperationError(this.getNode(), error.message, { itemIndex: i });
+				}
+				const resource = this.getNodeParameter('resource', i, '') as string;
+				const operation = this.getNodeParameter('operation', i, '') as string;
+				throw apiError(this, error, `${resource} ${operation}`, i);
 			}
 		}
 

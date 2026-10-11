@@ -68,6 +68,31 @@ With Fallback on, looot tries the next provider of the same job when the first f
 Idempotency Key empty the node uses `n8n-<execution id>-<item index>`. Search the Catalog hides endpoints that are
 not runnable for your account unless you turn off Runnable Now Only.
 
+## How inputs work
+
+**Endpoint.** Fields that take an endpoint (Create a Run, Inspect an Operation) have two modes. "From List" searches
+the catalog as you type (`GET /v1/catalog/search?q=<text>&limit=20`) and shows each endpoint with its price, for
+example `Tomba / Find a work email from a name and domain | $0.0089 per call`. Endpoints marked coming soon are hidden.
+"By ID" takes an endpoint ID such as `tomba-email-finder`, or a job as `job:people.email.find`. When the node runs as an
+AI tool, a plain string works in both places.
+
+**Input of a run.** Input Mode has two choices. "Fields" (the default) reads `GET /v1/operations/<endpointId>` and
+shows one box per input field, with required fields marked and a short description in the label. Array fields take a
+comma-separated list or a JSON array. Object fields take JSON. "JSON" takes the whole input object, for example
+`{"domain": "example.com", "first_name": "Jane", "last_name": "Doe"}`. Use JSON when you type a `job:` ID and want
+exact control, when an AI agent passes the input, or when an endpoint does not publish its fields. For a `job:` ID the
+Fields mode lists the field names that endpoints of that job use, none required.
+
+**Units.** Prices are in micros, which are millionths of a dollar. 10000 micros is 1 cent and 1000000 is 1 dollar.
+Max Cost is in US dollars. Wait is in seconds, at most 60. Limit is a count.
+
+**Errors.** A bad JSON input, a missing required field or a missing endpoint stops the node before any call, with a
+message that names the field. An API error shows the HTTP status, the looot error code and message, and the retry hint
+when there is one.
+
+**Free or paid.** Every operation description says what to pass and whether it costs anything. Only Create a Run
+spends credit, at the price shown next to the endpoint.
+
 Version 0.2.0 adds the Resource field. Workflows built on 0.1.x need their looot nodes set again.
 
 The node sets `usableAsTool: true`, so an AI Agent can call it as a tool (set
