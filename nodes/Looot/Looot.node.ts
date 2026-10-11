@@ -1,6 +1,7 @@
 import {
 	NodeApiError,
 	NodeConnectionTypes,
+	NodeOperationError,
 	type IDataObject,
 	type IExecuteFunctions,
 	type IHttpRequestMethods,
@@ -10,6 +11,136 @@ import {
 	type INodeTypeDescription,
 	type JsonObject,
 } from 'n8n-workflow';
+import { billingDescription } from './descriptions/BillingDescription';
+import { catalogDescription } from './descriptions/CatalogDescription';
+import { publicCatalogDescription } from './descriptions/PublicCatalogDescription';
+import { requestDescription } from './descriptions/RequestDescription';
+import { runDescription } from './descriptions/RunDescription';
+
+interface Call {
+	method: IHttpRequestMethods;
+	path: string;
+	qs?: IDataObject;
+	body?: IDataObject;
+}
+
+type Ctx = IExecuteFunctions;
+type Builder = (ctx: Ctx, i: number) => Call;
+
+const get = <T>(ctx: Ctx, name: string, i: number, fallback?: T) =>
+	ctx.getNodeParameter(name, i, fallback) as T;
+const str = (ctx: Ctx, name: string, i: number) => get<string>(ctx, name, i, '');
+const id = (ctx: Ctx, name: string, i: number) => encodeURIComponent(str(ctx, name, i));
+const list = (value: string) => value.split(',').map((part) => part.trim()).filter(Boolean);
+const defaultKey = (ctx: Ctx, i: number) => `n8n-${ctx.getExecutionId()}-${i}`;
+
+/** Copy a collection into query parameters. Empty strings and a zero max price are left out. */
+function collect(ctx: Ctx, name: string, i: number, skip: string[] = []): IDataObject {
+	const out: IDataObject = {};
+	for (const [key, value] of Object.entries(get<IDataObject>(ctx, name, i, {}))) {
+		if (skip.includes(key) || value === '' || value === undefined || value === null) continue;
+		if (value === 0 && /^max(Price|PriceMicros)$/.test(key)) continue;
+		out[key] = value;
+	}
+	return out;
+}
+
+const page = (ctx: Ctx, i: number): IDataObject => {
+	const qs: IDataObject = { limit: get<number>(ctx, 'limit', i) };
+	const cursor = str(ctx, 'cursor', i);
+	if (cursor) qs.cursor = cursor;
+	return qs;
+};
+
+const parseJson = (raw: unknown): IDataObject =>
+	(typeof raw === 'string' ? JSON.parse(raw) : raw) as IDataObject;
+
+/** One row per resource.operation: the HTTP call that operation makes. */
+export const OPERATIONS: Record<string, Builder> = {
+	'billing.getBalance': () => ({ method: 'GET', path: '/v1/balance' }),
+	'billing.listLedger': (c, i) => ({ method: 'GET', path: '/v1/ledger', qs: page(c, i) }),
+	'billing.listTopUps': () => ({ method: 'GET', path: '/v1/top-ups' }),
+	'billing.requestTopUp': (c, i) => ({
+		method: 'POST',
+		path: '/v1/top-ups',
+		body: { amountMicros: get<number>(c, 'amountMicros', i), currency: str(c, 'currency', i) },
+	}),
+
+	'publicCatalog.getOverview': (c, i) => ({
+		method: 'GET',
+		path: '/v1/catalog/overview',
+		qs: (() => {
+			const qs = collect(c, 'overviewOptions', i);
+			if (qs.topic) delete qs.depth; // the API refuses depth together with topic
+			return qs;
+		})(),
+	}),
+	'publicCatalog.compareItems': (c, i) => ({
+		method: 'POST',
+		path: '/v1/public-catalog/compare',
+		body: { catalogItemIds: list(str(c, 'catalogItemIds', i)) },
+	}),
+	'publicCatalog.getItem': (c, i) => ({ method: 'GET', path: `/v1/public-catalog/${id(c, 'catalogItemId', i)}` }),
+	'publicCatalog.searchItems': (c, i) => {
+		const qs = { ...page(c, i), ...collect(c, 'filters', i, ['signals']) };
+		if (get<IDataObject>(c, 'filters', i, {}).signals === true) qs.signals = '1';
+		const text = str(c, 'text', i);
+		if (text) qs.text = text;
+		return { method: 'GET', path: '/v1/public-catalog', qs };
+	},
+
+	'catalog.discover': (c, i) => ({ method: 'GET', path: '/v1/discover', qs: collect(c, 'discoverOptions', i) }),
+	'catalog.inspect': (c, i) => {
+		const endpointId = str(c, 'endpointId', i);
+		if (endpointId.startsWith('job:')) {
+			return { method: 'GET', path: '/v1/catalog/search', qs: { capability: endpointId.slice(4), limit: 20 } };
+		}
+		return { method: 'GET', path: `/v1/operations/${encodeURIComponent(endpointId)}` };
+	},
+	'catalog.listEndpoints': (c, i) => ({
+		method: 'GET',
+		path: '/v1/catalog/endpoints',
+		qs: { ...page(c, i), ...collect(c, 'listFilters', i) },
+	}),
+	'catalog.search': (c, i) => ({
+		method: 'GET',
+		path: '/v1/catalog/search',
+		qs: { q: str(c, 'query', i), limit: get<number>(c, 'limit', i), ...collect(c, 'filters', i, ['runnableNowOnly']) },
+	}),
+
+	'request.list': () => ({ method: 'GET', path: '/v1/capability-requests' }),
+	'request.create': (c, i) => {
+		const extra = get<IDataObject>(c, 'additionalFields', i, {});
+		const key = defaultKey(c, i);
+		const body: IDataObject = {
+			requestId: (extra.requestId as string) || key,
+			title: str(c, 'title', i),
+			description: str(c, 'description', i),
+			idempotencyKey: (extra.idempotencyKey as string) || key,
+		};
+		if (extra.desiredInputs) body.desiredInputs = list(extra.desiredInputs as string);
+		if (extra.desiredOutputs) body.desiredOutputs = list(extra.desiredOutputs as string);
+		return { method: 'POST', path: '/v1/capability-requests', body };
+	},
+
+	'run.cancel': (c, i) => ({ method: 'POST', path: `/v1/runs/${id(c, 'runId', i)}/cancel` }),
+	'run.create': (c, i) => {
+		const maxCostUsd = get<number>(c, 'maxCostUsd', i, 0);
+		const body: IDataObject = {
+			endpointId: str(c, 'endpointId', i),
+			input: parseJson(c.getNodeParameter('input', i)),
+			idempotencyKey: str(c, 'idempotencyKey', i).trim() || defaultKey(c, i),
+			wait: get<number>(c, 'wait', i),
+		};
+		if (get<boolean>(c, 'fallback', i)) {
+			body.fallback = maxCostUsd > 0 ? { enabled: true, maxCostUsd } : true;
+		}
+		return { method: 'POST', path: '/v1/runs', body };
+	},
+	'run.get': (c, i) => ({ method: 'GET', path: `/v1/runs/${id(c, 'runId', i)}` }),
+	'run.listAttempts': (c, i) => ({ method: 'GET', path: `/v1/runs/${id(c, 'runId', i)}/attempts` }),
+	'run.list': (c, i) => ({ method: 'GET', path: '/v1/runs', qs: { ...page(c, i), ...collect(c, 'filters', i) } }),
+};
 
 export class Looot implements INodeType {
 	description: INodeTypeDescription = {
@@ -18,197 +149,34 @@ export class Looot implements INodeType {
 		icon: { light: 'file:../../icons/looot.svg', dark: 'file:../../icons/looot.dark.svg' },
 		group: ['input'],
 		version: 1,
-		subtitle: '={{$parameter["operation"]}}',
+		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
 		description:
 			'Search, inspect and run 2,500+ data endpoints (emails, companies, SERP, news) with one prepaid balance',
-		defaults: {
-			name: 'looot',
-		},
+		defaults: { name: 'looot' },
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
-		credentials: [
-			{
-				name: 'loootApi',
-				required: true,
-			},
-		],
+		credentials: [{ name: 'loootApi', required: true }],
 		properties: [
 			{
-				displayName: 'Operation',
-				name: 'operation',
+				displayName: 'Resource',
+				name: 'resource',
 				type: 'options',
 				noDataExpression: true,
 				options: [
-					{
-						name: 'Balance',
-						value: 'balance',
-						description: 'Read the available credit and the top-up link',
-						action: 'Get the balance',
-					},
-					{
-						name: 'Get Run',
-						value: 'getRun',
-						description: 'Read one run: status, result and cost',
-						action: 'Get a run',
-					},
-					{
-						name: 'Inspect Endpoint',
-						value: 'inspect',
-						description: 'Read the exact inputs, output and price of an endpoint, or list the endpoints behind a job (free)',
-						action: 'Inspect an endpoint',
-					},
-					{
-						name: 'Run',
-						value: 'run',
-						description: 'Run an endpoint or a job and spend prepaid credit',
-						action: 'Run an endpoint or job',
-					},
-					{
-						name: 'Search Catalog',
-						value: 'searchCatalog',
-						description: 'Find endpoints by what you want to do (free)',
-						action: 'Search the catalog',
-					},
+					{ name: 'Billing', value: 'billing' },
+					{ name: 'Catalog', value: 'catalog' },
+					{ name: 'Public Catalog', value: 'publicCatalog', description: 'Browse without an account' },
+					{ name: 'Request', value: 'request' },
+					{ name: 'Run', value: 'run' },
 				],
-				default: 'searchCatalog',
+				default: 'catalog',
 			},
-
-			// ---- Search catalog
-			{
-				displayName: 'Query',
-				name: 'query',
-				type: 'string',
-				default: '',
-				placeholder: 'find the work email of a person at a company',
-				description: 'What you want to do, in plain words',
-				displayOptions: { show: { operation: ['searchCatalog'] } },
-			},
-			{
-				displayName: 'Limit',
-				name: 'limit',
-				type: 'number',
-				typeOptions: { minValue: 1 },
-				default: 50,
-				description: 'Max number of results to return',
-				displayOptions: { show: { operation: ['searchCatalog'] } },
-			},
-			{
-				displayName: 'Filters',
-				name: 'filters',
-				type: 'collection',
-				placeholder: 'Add Filter',
-				default: {},
-				displayOptions: { show: { operation: ['searchCatalog'] } },
-				options: [
-					{
-						displayName: 'Category',
-						name: 'category',
-						type: 'string',
-						default: '',
-					},
-					{
-						displayName: 'Max Price (Micros)',
-						name: 'maxPriceMicros',
-						type: 'number',
-						default: 0,
-						description: 'Only endpoints that cost at most this many millionths of a dollar',
-					},
-					{
-						displayName: 'Prefer',
-						name: 'prefer',
-						type: 'options',
-						options: [
-							{ name: 'Balanced', value: 'balanced' },
-							{ name: 'Cheapest', value: 'cheapest' },
-							{ name: 'Fastest', value: 'fastest' },
-							{ name: 'Reliable', value: 'reliable' },
-						],
-						default: 'balanced',
-					},
-					{
-						displayName: 'Provider',
-						name: 'provider',
-						type: 'string',
-						default: '',
-					},
-						{
-							displayName: 'Runnable Now Only',
-							name: 'runnableNowOnly',
-							type: 'boolean',
-							default: true,
-							description: 'Whether to drop endpoints marked coming soon or not available for your account',
-						},
-				],
-			},
-
-			// ---- Inspect
-			{
-				displayName: 'Endpoint ID',
-				name: 'endpointId',
-				type: 'string',
-				required: true,
-				default: '',
-				placeholder: 'job:people.email.find',
-				description: 'An endpoint ID from a search answer. For Inspect you can also write a job as job:people.email.find to list its endpoints. Run accepts both.',
-				displayOptions: { show: { operation: ['inspect', 'run'] } },
-			},
-
-			// ---- Run
-			{
-				displayName: 'Input (JSON)',
-				name: 'input',
-				type: 'json',
-				required: true,
-				default: '{}',
-				description:
-					'The input object. Use the exact field names that Inspect Endpoint lists for this endpoint or job.',
-				displayOptions: { show: { operation: ['run'] } },
-			},
-			{
-				displayName: 'Idempotency Key',
-				name: 'idempotencyKey',
-				type: 'string',
-				default: '',
-				description: 'Same key and same input never pays twice. Leave empty to use the execution ID plus the item index.',
-				displayOptions: { show: { operation: ['run'] } },
-			},
-			{
-				displayName: 'Fallback',
-				name: 'fallback',
-				type: 'boolean',
-				default: true,
-				description: 'Whether to try the next provider of the same job when the first finds nothing. Only works with job: IDs and lookups.',
-				displayOptions: { show: { operation: ['run'] } },
-			},
-			{
-				displayName: 'Max Cost (USD)',
-				name: 'maxCostUsd',
-				type: 'number',
-				typeOptions: { minValue: 0, numberPrecision: 4 },
-				default: 0,
-				description: 'Cap for the whole fallback route. 0 means no extra cap.',
-				displayOptions: { show: { operation: ['run'], fallback: [true] } },
-			},
-			{
-				displayName: 'Wait (Seconds)',
-				name: 'wait',
-				type: 'number',
-				typeOptions: { minValue: 0 },
-				default: 20,
-				description: 'How long to wait for the result before returning a run ID. 0 returns at once.',
-				displayOptions: { show: { operation: ['run'] } },
-			},
-
-			// ---- Get run
-			{
-				displayName: 'Run ID',
-				name: 'runId',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { operation: ['getRun'] } },
-			},
+			...billingDescription,
+			...publicCatalogDescription,
+			...catalogDescription,
+			...requestDescription,
+			...runDescription,
 		],
 	};
 
@@ -220,68 +188,27 @@ export class Looot implements INodeType {
 
 		for (let i = 0; i < items.length; i++) {
 			try {
+				const resource = this.getNodeParameter('resource', i) as string;
 				const operation = this.getNodeParameter('operation', i) as string;
-				let method: IHttpRequestMethods = 'GET';
-				let path = '';
-				let qs: IDataObject = {};
-				let body: IDataObject | undefined;
-
-				if (operation === 'searchCatalog') {
-					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
-					path = '/v1/catalog/search';
-					qs = { q: this.getNodeParameter('query', i) as string, limit: this.getNodeParameter('limit', i) as number };
-					for (const [key, value] of Object.entries(filters)) {
-						if (key === 'runnableNowOnly') continue;
-						if (value !== '' && value !== 0 && value !== undefined) qs[key] = value as string | number;
-					}
-				} else if (operation === 'inspect') {
-					const endpointId = this.getNodeParameter('endpointId', i) as string;
-					if (endpointId.startsWith('job:')) {
-						// The operations route knows endpoints only. A job is a capability, so list its endpoints.
-						path = '/v1/catalog/search';
-						qs = { capability: endpointId.slice(4), limit: 20 };
-					} else {
-						path = `/v1/operations/${encodeURIComponent(endpointId)}`;
-					}
-				} else if (operation === 'run') {
-					method = 'POST';
-					path = '/v1/runs';
-					const endpointId = this.getNodeParameter('endpointId', i) as string;
-					const rawInput = this.getNodeParameter('input', i);
-					const input = (typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput) as IDataObject;
-					const givenKey = (this.getNodeParameter('idempotencyKey', i, '') as string).trim();
-					const maxCostUsd = this.getNodeParameter('maxCostUsd', i, 0) as number;
-					const useFallback = this.getNodeParameter('fallback', i) as boolean;
-					body = {
-						endpointId,
-						input,
-						idempotencyKey: givenKey || `n8n-${this.getExecutionId()}-${i}`,
-						wait: this.getNodeParameter('wait', i) as number,
-					};
-					if (useFallback) {
-						body.fallback = maxCostUsd > 0 ? { enabled: true, maxCostUsd } : true;
-					}
-				} else if (operation === 'getRun') {
-					const runId = this.getNodeParameter('runId', i) as string;
-					path = `/v1/runs/${encodeURIComponent(runId)}`;
-				} else {
-					path = '/v1/balance';
-				}
+				const build = OPERATIONS[`${resource}.${operation}`];
+				if (!build) throw new NodeOperationError(this.getNode(), `Unknown operation ${resource}.${operation}`, { itemIndex: i });
+				const call = build(this, i);
 
 				const options: IHttpRequestOptions = {
-					method,
-					url: `${baseUrl}${path}`,
-					qs,
+					method: call.method,
+					url: `${baseUrl}${call.path}`,
+					qs: call.qs ?? {},
 					json: true,
 				};
-				if (body) options.body = body;
+				if (call.body) options.body = call.body;
 
 				const response = (await this.helpers.httpRequestWithAuthentication.call(
 					this,
 					'loootApi',
 					options,
 				)) as IDataObject;
-				if (operation === 'searchCatalog' && Array.isArray(response.endpoints)) {
+
+				if (resource === 'catalog' && operation === 'search' && Array.isArray(response.endpoints)) {
 					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
 					if (filters.runnableNowOnly !== false) {
 						response.endpoints = (response.endpoints as IDataObject[]).filter(
@@ -292,10 +219,7 @@ export class Looot implements INodeType {
 				returnData.push({ json: response, pairedItem: { item: i } });
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({
-						json: { error: (error as Error).message },
-						pairedItem: { item: i },
-					});
+					returnData.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
 					continue;
 				}
 				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
