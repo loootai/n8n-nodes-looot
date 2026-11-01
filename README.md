@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/github/license/loootai/n8n-nodes-looot)](LICENSE) [![Docs](https://img.shields.io/badge/docs-docs.looot.ai-12A06A)](https://docs.looot.ai)
 
-n8n community node for [looot](https://looot.ai): one account and one prepaid balance for 2,500+ data
+n8n community node for [looot](https://looot.ai): one account and one prepaid balance for 4,200+ data
 endpoints (find and verify emails, enrich companies, Google results, news, and more).
 
 ## Install

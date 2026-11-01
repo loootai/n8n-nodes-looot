@@ -20,7 +20,7 @@ export class Looot implements INodeType {
 		version: 1,
 		subtitle: '={{$parameter["operation"]}}',
 		description:
-			'Search, inspect and run 2,500+ data endpoints (emails, companies, SERP, news) with one prepaid balance',
+			'Search, inspect and run 4,200+ data endpoints (emails, companies, SERP, news) with one prepaid balance',
 		defaults: {
 			name: 'looot',
 		},
