@@ -6,6 +6,7 @@ import {
 	type IHttpRequestMethods,
 	type IHttpRequestOptions,
 	type INodeExecutionData,
+	type INodeProperties,
 	type INodeType,
 	type INodeTypeDescription,
 } from 'n8n-workflow';
@@ -16,6 +17,18 @@ import { catalogDescription } from './descriptions/CatalogDescription';
 import { publicCatalogDescription } from './descriptions/PublicCatalogDescription';
 import { requestDescription } from './descriptions/RequestDescription';
 import { runDescription } from './descriptions/RunDescription';
+import { v1Properties } from './v1/description';
+import { executeV1 } from './v1/execute';
+
+/** Show each field only on the node versions listed, so version 1 and version 2 fields never mix. */
+const onlyVersions = (versions: number[], properties: INodeProperties[]): INodeProperties[] =>
+	properties.map((property) => ({
+		...property,
+		displayOptions: {
+			...property.displayOptions,
+			show: { ...property.displayOptions?.show, '@version': versions },
+		},
+	}));
 
 interface Call {
 	method: IHttpRequestMethods;
@@ -155,39 +168,48 @@ export class Looot implements INodeType {
 		name: 'looot',
 		icon: { light: 'file:../../icons/looot.svg', dark: 'file:../../icons/looot.dark.svg' },
 		group: ['input'],
-		version: 1,
-		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
+		// Version 1 is the 0.1.x node (flat operations). Workflows saved with it keep running unchanged.
+		// Version 2 adds the Resource field and every API operation; new nodes get it.
+		version: [1, 2],
+		defaultVersion: 2,
+		subtitle:
+			'={{$parameter["resource"] ? $parameter["resource"] + ": " + $parameter["operation"] : $parameter["operation"]}}',
 		description:
-			'Search, inspect and run 2,500+ data endpoints (emails, companies, SERP, news) with one prepaid balance',
+			'Search, inspect and run 4,200+ data endpoints (emails, companies, SERP, news) with one prepaid balance',
 		defaults: { name: 'looot' },
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
 		credentials: [{ name: 'loootApi', required: true }],
 		properties: [
-			{
-				displayName: 'Resource',
-				name: 'resource',
-				type: 'options',
-				noDataExpression: true,
-				options: [
-					{ name: 'Billing', value: 'billing' },
-					{ name: 'Catalog', value: 'catalog' },
-					{ name: 'Public Catalog', value: 'publicCatalog', description: 'Browse without an account' },
-					{ name: 'Request', value: 'request' },
-					{ name: 'Run', value: 'run' },
-				],
-				default: 'catalog',
-			},
-			...billingDescription,
-			...publicCatalogDescription,
-			...catalogDescription,
-			...requestDescription,
-			...runDescription,
+			...onlyVersions([1], v1Properties),
+			...onlyVersions([2], [
+				{
+					displayName: 'Resource',
+					name: 'resource',
+					type: 'options',
+					noDataExpression: true,
+					options: [
+						{ name: 'Billing', value: 'billing' },
+						{ name: 'Catalog', value: 'catalog' },
+						{ name: 'Public Catalog', value: 'publicCatalog', description: 'Browse without an account' },
+						{ name: 'Request', value: 'request' },
+						{ name: 'Run', value: 'run' },
+					],
+					default: 'catalog',
+				},
+				...billingDescription,
+				...publicCatalogDescription,
+				...catalogDescription,
+				...requestDescription,
+				...runDescription,
+			]),
 		],
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+		if (this.getNode().typeVersion === 1) return executeV1.call(this);
+
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 		const credentials = await this.getCredentials('loootApi');

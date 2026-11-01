@@ -47,7 +47,7 @@ async function exercise(resource, operation, params, onCall) {
 		getNodeParameter: (name, _i, fallback) => (name in all ? all[name] : fallback),
 		getExecutionId: () => 'ex1',
 		continueOnFail: () => false,
-		getNode: () => ({ name: 'looot' }),
+		getNode: () => ({ name: 'looot', typeVersion: 2 }),
 		helpers: { httpRequestWithAuthentication: async (_c, options) => onCall(options) },
 	};
 	return new Looot().execute.call(ctx);
@@ -110,7 +110,7 @@ for (const [name, thrown] of [
 }
 // continueOnFail returns the message instead of throwing
 {
-	const ctx = { getInputData: () => [{ json: {} }], getCredentials: async () => ({ baseUrl: BASE }), getNodeParameter: (n, _i, f) => ({ resource: 'run', operation: 'get', runId: 'r1' })[n] ?? f, getExecutionId: () => 'ex1', continueOnFail: () => true, getNode: () => ({ name: 'looot' }), helpers: { httpRequestWithAuthentication: async () => { throw Object.assign(new Error('x'), { httpCode: '404', error: body }); } } };
+	const ctx = { getInputData: () => [{ json: {} }], getCredentials: async () => ({ baseUrl: BASE }), getNodeParameter: (n, _i, f) => ({ resource: 'run', operation: 'get', runId: 'r1' })[n] ?? f, getExecutionId: () => 'ex1', continueOnFail: () => true, getNode: () => ({ name: 'looot', typeVersion: 2 }), helpers: { httpRequestWithAuthentication: async () => { throw Object.assign(new Error('x'), { httpCode: '404', error: body }); } } };
 	const out = await new Looot().execute.call(ctx);
 	assert.match(out[0][0].json.error, /Balance is too low/); console.log('ok   continueOnFail'); pass++;
 }
@@ -170,6 +170,66 @@ const loader = (responses, current = {}) => {
 	l = loader(() => ({ inputSchema: {} }), { endpointId: 'no-fields' });
 	await assert.rejects(methods.resourceMapping.getInputFields.call(l.ctx), /switch|Input Mode to JSON/);
 	console.log('ok   mapper: no schema says to use JSON mode'); pass++;
+}
+
+// ---- node version 1: the 0.1.x flat operations keep sending the same calls, so saved workflows run unchanged
+{
+	const v1Cases = [
+		// [operation, params, method, path, qs, body]
+		['balance', {}, 'GET', '/v1/balance', {}, undefined],
+		['searchCatalog', { query: 'find email', limit: 5, filters: { category: 'people', maxPriceMicros: 0, runnableNowOnly: true, prefer: 'fastest' } }, 'GET', '/v1/catalog/search', { q: 'find email', limit: 5, category: 'people', prefer: 'fastest' }, undefined],
+		['inspect', { endpointId: 'hunter.email-finder' }, 'GET', '/v1/operations/hunter.email-finder', {}, undefined],
+		['inspect', { endpointId: 'job:people.email.find' }, 'GET', '/v1/catalog/search', { capability: 'people.email.find', limit: 20 }, undefined],
+		['run', { endpointId: 'job:people.email.find', input: '{"domain":"a.com"}', idempotencyKey: '', fallback: true, maxCostUsd: 0.1, wait: 20 }, 'POST', '/v1/runs', {}, { endpointId: 'job:people.email.find', input: { domain: 'a.com' }, idempotencyKey: 'n8n-ex1-0', wait: 20, fallback: { enabled: true, maxCostUsd: 0.1 } }],
+		['run', { endpointId: 'e.x', input: { q: 1 }, idempotencyKey: 'mine', fallback: false, maxCostUsd: 0, wait: 0 }, 'POST', '/v1/runs', {}, { endpointId: 'e.x', input: { q: 1 }, idempotencyKey: 'mine', wait: 0 }],
+		['getRun', { runId: 'run_1' }, 'GET', '/v1/runs/run_1', {}, undefined],
+	];
+	const exerciseV1 = (operation, params, onCall) => {
+		const all = { operation, ...params };
+		const ctx = {
+			getInputData: () => [{ json: {} }],
+			getCredentials: async () => ({ baseUrl: BASE, accessToken: 'x' }),
+			// a version 1 node has no Resource field: reading it would be a bug
+			getNodeParameter: (name, _i, fallback) => {
+				assert.notEqual(name, 'resource', 'version 1 must not read resource');
+				return name in all ? all[name] : fallback;
+			},
+			getExecutionId: () => 'ex1',
+			continueOnFail: () => false,
+			getNode: () => ({ name: 'looot', typeVersion: 1 }),
+			helpers: { httpRequestWithAuthentication: async (_c, options) => onCall(options) },
+		};
+		return new Looot().execute.call(ctx);
+	};
+	for (const [operation, params, method, path, qs, body] of v1Cases) {
+		let seen;
+		await exerciseV1(operation, params, async (o) => ((seen = o), { endpoints: [] }));
+		const label = `v1 ${operation} ${method} ${path}`;
+		assert.equal(seen.method, method, `${label} method`);
+		assert.equal(seen.url, BASE + path, `${label} url`);
+		assert.deepEqual(seen.qs, qs, `${label} qs`);
+		assert.deepEqual(seen.body, body, `${label} body`);
+		console.log('ok  ', label);
+		pass++;
+	}
+	const out = await exerciseV1('searchCatalog', { query: 'x', limit: 1, filters: {} }, async () => ({ endpoints: [{ runnableNow: false }, {}] }));
+	assert.equal(out[0][0].json.endpoints.length, 1);
+	console.log('ok   v1 runnableNowOnly defaults on'); pass++;
+
+	// the fields n8n shows for each version: v1 has no Resource and its flat operations, v2 defaults to Resource Catalog
+	const { NodeHelpers } = require('n8n-workflow');
+	const description = new Looot().description;
+	assert.deepEqual(description.version, [1, 2]);
+	assert.equal(description.defaultVersion, 2);
+	const nodeOf = (typeVersion) => ({ typeVersion, type: 'n8n-nodes-looot.looot', name: 'looot', parameters: {} });
+	const v1Params = NodeHelpers.getNodeParameters(description.properties, { operation: 'run', endpointId: 'job:people.email.find', input: '{}' }, true, false, nodeOf(1), description);
+	assert.equal(v1Params.resource, undefined, 'v1 has no resource');
+	assert.equal(v1Params.operation, 'run');
+	assert.equal(v1Params.wait, 20);
+	assert.equal(v1Params.fallback, true);
+	const v2Params = NodeHelpers.getNodeParameters(description.properties, {}, true, false, nodeOf(2), description);
+	assert.equal(v2Params.resource, 'catalog');
+	console.log('ok   v1 and v2 resolve their own fields'); pass++;
 }
 
 console.log(`\n${pass} checks passed`);

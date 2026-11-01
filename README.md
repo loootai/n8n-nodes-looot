@@ -93,7 +93,8 @@ when there is one.
 **Free or paid.** Every operation description says what to pass and whether it costs anything. Only Create a Run
 spends credit, at the price shown next to the endpoint.
 
-Version 0.2.0 adds the Resource field. Workflows built on 0.1.x need their looot nodes set again.
+Package 0.2.0 adds node version 2 with the Resource field. A new looot node gets version 2. Workflows built on 0.1.x
+keep node version 1, with its five flat operations, and run unchanged.
 
 The node sets `usableAsTool: true`, so an AI Agent can call it as a tool (set
 `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true` on self-hosted n8n).
